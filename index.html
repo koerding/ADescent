@@ -416,7 +416,11 @@ function App() {
     if (scatRef.current) scatRef.current.getContext("2d").clearRect(0, 0, 340, 340);
   }, [width, depth]);
 
+  const didInit = useRef(false);
   useEffect(() => { initNetwork(); }, [initNetwork]);
+  useEffect(() => {
+    if (!didInit.current && netRef.current) { didInit.current = true; doStep(true); }
+  }); // eslint-disable-line
 
   const cheapStep = useCallback(() => {
     const net = netRef.current;
