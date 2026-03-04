@@ -56,9 +56,12 @@ function createNetwork(sizes) {
   const W = [];
   for (let l = 0; l < sizes.length - 1; l++) {
     const nin = sizes[l], nout = sizes[l + 1];
+    const cols = nin + 1; // augmented: last column is bias
     const scale = Math.sqrt(2 / nin);
-    const w = new Float64Array(nout * nin);
-    for (let i = 0; i < w.length; i++) w[i] = randn() * scale;
+    const w = new Float64Array(nout * cols);
+    for (let i = 0; i < nout; i++)
+      for (let j = 0; j < nin; j++) w[i * cols + j] = randn() * scale;
+    // bias column (index nin) already 0 from Float64Array init
     W.push(w);
   }
   return { sizes, W };
@@ -71,10 +74,15 @@ function forward(net, x) {
   const h = [null];
   for (let l = 0; l < L; l++) {
     const nin = sizes[l], nout = sizes[l + 1];
+    const cols = nin + 1;
+    // augment input with 1.0 for bias
+    const a_aug = new Float64Array(cols);
+    for (let j = 0; j < nin; j++) a_aug[j] = a[l][j];
+    a_aug[nin] = 1.0;
     const hl = new Float64Array(nout);
     for (let i = 0; i < nout; i++) {
       let s = 0;
-      for (let j = 0; j < nin; j++) s += W[l][i * nin + j] * a[l][j];
+      for (let j = 0; j < cols; j++) s += W[l][i * cols + j] * a_aug[j];
       hl[i] = s;
     }
     h.push(hl);
@@ -100,18 +108,24 @@ function backprop(net, fwd, target) {
   for (let i = 0; i < nout; i++) dLdA[L][i] = a[L][i] - target[i];
   for (let l = L - 1; l >= 0; l--) {
     const nin = sizes[l], no = sizes[l + 1];
+    const cols = nin + 1;
     const delta = new Float64Array(no);
     if (l === L - 1) { for (let i = 0; i < no; i++) delta[i] = dLdA[l + 1][i]; }
     else { for (let i = 0; i < no; i++) delta[i] = h[l + 1][i] > 0 ? dLdA[l + 1][i] : 0; }
-    const dw = new Float64Array(no * nin);
+    // augment a[l] with 1.0 for bias
+    const a_aug = new Float64Array(cols);
+    for (let j = 0; j < nin; j++) a_aug[j] = a[l][j];
+    a_aug[nin] = 1.0;
+    const dw = new Float64Array(no * cols);
     for (let i = 0; i < no; i++)
-      for (let j = 0; j < nin; j++) dw[i * nin + j] = delta[i] * a[l][j];
+      for (let j = 0; j < cols; j++) dw[i * cols + j] = delta[i] * a_aug[j];
     dLdW.unshift(dw);
     if (l > 0) {
       dLdA[l] = new Float64Array(nin);
       for (let j = 0; j < nin; j++) {
         let s = 0;
-        for (let i = 0; i < no; i++) s += W[l][i * nin + j] * delta[i];
+        // use only weight columns (exclude bias column)
+        for (let i = 0; i < no; i++) s += W[l][i * cols + j] * delta[i];
         dLdA[l][j] = s;
       }
     }
@@ -146,7 +160,7 @@ function computeAllPredictions(net, fwd, dLdW, dLdA, target, eta) {
   }
 
   let totalParams = 0;
-  for (let l = 0; l < L; l++) totalParams += sizes[l] * sizes[l + 1];
+  for (let l = 0; l < L; l++) totalParams += (sizes[l] + 1) * sizes[l + 1];
 
   const deltaW = new Float64Array(totalParams);
   let pOff = 0;
@@ -159,13 +173,19 @@ function computeAllPredictions(net, fwd, dLdW, dLdA, target, eta) {
   let paramOffset = 0;
   for (let m = 0; m < L; m++) {
     const nin_m = sizes[m], nout_m = sizes[m + 1];
-    const P = nout_m * nin_m;
+    const cols_m = nin_m + 1; // augmented column count
+    const P = nout_m * cols_m;
+
+    // augment a[m] with 1.0
+    const a_aug = new Float64Array(cols_m);
+    for (let k = 0; k < nin_m; k++) a_aug[k] = a[m][k];
+    a_aug[nin_m] = 1.0;
 
     let J_cur = new Float64Array(nout_m * P);
     for (let j = 0; j < nout_m; j++) {
       const fp = (m < L - 1) ? (h[m + 1][j] > 0 ? 1 : 0) : 1;
-      for (let k = 0; k < nin_m; k++)
-        J_cur[j * P + j * nin_m + k] = fp * a[m][k];
+      for (let k = 0; k < cols_m; k++)
+        J_cur[j * P + j * cols_m + k] = fp * a_aug[k];
     }
 
     const gOff = layerOffsets[m];
@@ -176,10 +196,12 @@ function computeAllPredictions(net, fwd, dLdW, dLdA, target, eta) {
     let J_prev = J_cur, prevRows = nout_m;
     for (let l = m + 1; l < L; l++) {
       const nin_l = sizes[l], nout_l = sizes[l + 1];
+      const cols_l = nin_l + 1;
+      // propagation matrix: exclude bias column of W[l]
       const DW = new Float64Array(nout_l * nin_l);
       for (let i = 0; i < nout_l; i++) {
         const fp = (l < L - 1) ? (h[l + 1][i] > 0 ? 1 : 0) : 1;
-        for (let j = 0; j < nin_l; j++) DW[i * nin_l + j] = fp * W[l][i * nin_l + j];
+        for (let j = 0; j < nin_l; j++) DW[i * nin_l + j] = fp * W[l][i * cols_l + j];
       }
       const J_new = matmul(DW, nout_l, nin_l, J_prev, prevRows, P);
       const gOff2 = layerOffsets[l];
@@ -225,7 +247,21 @@ function computeAllPredictions(net, fwd, dLdW, dLdA, target, eta) {
     }
   }
 
-  return { groundTruth, fullThetaPred, diagPred, Theta, totalN, neuronCounts };
+  // Active mask: hidden neurons active iff pre-activation > 0; output always active
+  const active = new Float64Array(totalN);
+  for (let l = 1; l <= L; l++) {
+    const gOff = layerOffsets[l - 1];
+    const n = sizes[l];
+    if (l < L) {
+      for (let i = 0; i < n; i++) active[gOff + i] = h[l][i] > 0 ? 1 : 0;
+    } else {
+      for (let i = 0; i < n; i++) active[gOff + i] = 1;
+    }
+  }
+  const negGradA = new Float64Array(totalN);
+  for (let i = 0; i < totalN; i++) negGradA[i] = -gradA_bp[i] * active[i];
+
+  return { groundTruth, fullThetaPred, diagPred, negGradA, Theta, totalN, neuronCounts };
 }
 
 // ======================== DATA ========================
@@ -309,22 +345,29 @@ function drawScatter(canvas, pred, actual, neuronCounts, label) {
   ctx.fillText("actual \u0394A", 0, 0); ctx.restore();
 }
 
-function r2fn(actual, pred) {
+function corrfn(actual, pred) {
   const n = actual.length;
-  let mu = 0; for (let i = 0; i < n; i++) mu += actual[i]; mu /= n;
-  let ssTot = 0, ssRes = 0;
-  for (let i = 0; i < n; i++) { ssTot += (actual[i] - mu) ** 2; ssRes += (actual[i] - pred[i]) ** 2; }
-  return ssTot > 1e-30 ? 1 - ssRes / ssTot : 0;
+  let muA = 0, muP = 0;
+  for (let i = 0; i < n; i++) { muA += actual[i]; muP += pred[i]; }
+  muA /= n; muP /= n;
+  let cov = 0, varA = 0, varP = 0;
+  for (let i = 0; i < n; i++) {
+    const da = actual[i] - muA, dp = pred[i] - muP;
+    cov += da * dp; varA += da * da; varP += dp * dp;
+  }
+  const denom = Math.sqrt(varA * varP);
+  return denom > 1e-30 ? cov / denom : 0;
 }
 
 // ======================== COMPONENT ========================
 
 const LCOLORS = ["#2563eb", "#0891b2", "#059669", "#d97706"];
-const MODES = ["ground", "fullTheta", "diagBP"];
+const MODES = ["negGradA", "diagBP", "fullTheta", "ground"];
 const MODE_LABELS = {
-  ground: "Eq.2: J\u00B7\u0394W",
-  fullTheta: "Eq.3: \u0398\u00B7\u2202L",
-  diagBP: "Eq.5: \u0398\u1D62\u1D62\u00B7\u2207L",
+  ground: "J\u00B7\u0394W (exact)",
+  fullTheta: "\u0398\u00B7\u2202L (kernel)",
+  diagBP: "diag \u0398 (scaled)",
+  negGradA: "\u2212dL/dA (raw)",
 };
 
 function App() {
@@ -336,7 +379,7 @@ function App() {
   const [metrics, setMetrics] = useState({});
   const [history, setHistory] = useState([]);
   const [running, setRunning] = useState(false);
-  const [scatterMode, setScatterMode] = useState("fullTheta");
+  const [scatterMode, setScatterMode] = useState("negGradA");
 
   const netRef = useRef(null);
   const dataRef = useRef(null);
@@ -396,7 +439,7 @@ function App() {
     const aBefore = [];
     for (let l = 1; l <= L; l++)
       for (let i = 0; i < fwd.a[l].length; i++) aBefore.push(fwd.a[l][i]);
-    const { groundTruth, fullThetaPred, diagPred, Theta, totalN, neuronCounts } =
+    const { groundTruth, fullThetaPred, diagPred, negGradA, Theta, totalN, neuronCounts } =
       computeAllPredictions(net, fwd, dLdW, dLdA, Y[bi], lr);
     for (let l = 0; l < L; l++)
       for (let i = 0; i < net.W[l].length; i++) net.W[l][i] -= lr * dLdW[l][i];
@@ -411,12 +454,12 @@ function App() {
       const out = f.a[L];
       for (let i = 0; i < out.length; i++) totalLoss += 0.5 * (out[i] - Y[b][i]) ** 2 / B;
     }
-    const r2G = r2fn(deltaA, Array.from(groundTruth));
-    const r2F = r2fn(deltaA, Array.from(fullThetaPred));
-    const r2D = r2fn(deltaA, Array.from(diagPred));
+    const r2G = corrfn(deltaA, Array.from(groundTruth));
+    const r2F = corrfn(deltaA, Array.from(fullThetaPred));
+    const r2D = corrfn(deltaA, Array.from(diagPred));
     stepRef.current++;
     return {
-      preds: { ground: Array.from(groundTruth), fullTheta: Array.from(fullThetaPred), diagBP: Array.from(diagPred) },
+      preds: { ground: Array.from(groundTruth), fullTheta: Array.from(fullThetaPred), diagBP: Array.from(diagPred), negGradA: Array.from(negGradA) },
       actual: deltaA, neuronCounts, Theta, totalN, totalLoss, r2G, r2F, r2D,
     };
   }, [lr]);
@@ -435,7 +478,7 @@ function App() {
       setMetrics({ loss: totalLoss, r2G, r2F, r2D });
       setHistory(h => [...h, {
         step: stepRef.current, loss: +totalLoss.toFixed(5),
-        "R\u00B2 Eq.2": +r2G.toFixed(4), "R\u00B2 Eq.3": +r2F.toFixed(4), "R\u00B2 Eq.5": +r2D.toFixed(4),
+        "r exact": +r2G.toFixed(4), "r kernel": +r2F.toFixed(4), "r scaled": +r2D.toFixed(4),
       }]);
     } else {
       const totalLoss = cheapStep();
@@ -493,8 +536,7 @@ function App() {
             Weight-space GD is kernel descent in activity space
           </h1>
           <p style={{ margin: "4px 0 0", fontSize: 12, color: "#6b6860", fontFamily: "monospace" }}>
-            {"\u0394A"}<sub>i</sub>{" = \u2212\u03B7 \u03A3"}<sub>k</sub>{" \u0398"}<sub>ik</sub>{" \u2202L/\u2202A"}<sub>k</sub>
-            {"  (Eq.3)   \u00B7   \u0394A"}<sub>i</sub>{" \u2248 \u2212\u03B7\u0398"}<sub>ii</sub>{"\u00B7dL/dA"}<sub>i</sub>{" (Eq.5)"}
+            If weights do gradient descent, activities must too (approximately, in wide networks)
           </p>
         </div>
 
@@ -545,9 +587,9 @@ function App() {
 
         <div style={{ display: "flex", gap: 18, marginBottom: 12, fontFamily: "monospace", fontSize: 11, flexWrap: "wrap" }}>
           <span>loss: <b>{fmt(m.loss, 4)}</b></span>
-          <span style={{ color: "#888" }}>R<sup>2</sup><sub style={{fontSize:9}}>Eq.2</sub>: <b>{fmt(m.r2G)}</b></span>
-          <span style={{ color: "#2563eb" }}>R<sup>2</sup><sub style={{fontSize:9}}>Eq.3</sub>: <b>{fmt(m.r2F)}</b></span>
-          <span style={{ color: "#059669" }}>R<sup>2</sup><sub style={{fontSize:9}}>Eq.5</sub>: <b>{fmt(m.r2D)}</b></span>
+          <span style={{ color: "#888" }}>r<sub style={{fontSize:9}}>Eq.2</sub>: <b>{fmt(m.r2G)}</b></span>
+          <span style={{ color: "#2563eb" }}>r<sub style={{fontSize:9}}>Eq.3</sub>: <b>{fmt(m.r2F)}</b></span>
+          <span style={{ color: "#059669" }}>r<sub style={{fontSize:9}}>Eq.5</sub>: <b>{fmt(m.r2D)}</b></span>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
@@ -576,20 +618,21 @@ function App() {
                     style={{
                       padding: "2px 6px", border: "1px solid #ccc",
                       borderLeft: mi > 0 ? "none" : undefined,
-                      borderRadius: mi === 0 ? "3px 0 0 3px" : mi === 2 ? "0 3px 3px 0" : "0",
+                      borderRadius: mi === 0 ? "3px 0 0 3px" : mi === MODES.length - 1 ? "0 3px 3px 0" : "0",
                       background: scatterMode === mode ? "#2a2a2e" : "#fff",
                       color: scatterMode === mode ? "#fff" : "#666",
                       cursor: "pointer", fontFamily: "monospace", fontSize: 9,
                     }}>
-                    {mode === "ground" ? "Eq.2" : mode === "fullTheta" ? "Eq.3" : "Eq.5"}
+                    {mode === "negGradA" ? "raw" : mode === "diagBP" ? "scaled" : mode === "fullTheta" ? "kernel" : "exact"}
                   </button>
                 ))}
               </div>
             </div>
             <div style={{ fontSize: 10, color: "#888", marginBottom: 6, fontFamily: "monospace" }}>
-              {scatterMode === "ground" && "Eq.2: J\u00B7\u0394W \u2014 first-order Taylor identity (sanity check)"}
-              {scatterMode === "fullTheta" && "Eq.3: \u0398\u00B7\u2202L \u2014 kernel with partial derivs, sum over outputs only"}
-              {scatterMode === "diagBP" && "Eq.5: \u0398\u1D62\u1D62 \u00D7 backprop gradient \u2014 diagonal approximation"}
+              {scatterMode === "negGradA" && "Raw activity gradient \u2014 the experimentally testable prediction"}
+              {scatterMode === "diagBP" && "Gradient scaled by per-neuron \u0398\u1D62\u1D62 \u2014 corrects for parameter count"}
+              {scatterMode === "fullTheta" && "Full kernel prediction \u2014 includes cross-neuron coupling"}
+              {scatterMode === "ground" && "Exact first-order Taylor \u2014 sanity check, should be perfect"}
             </div>
             <canvas ref={scatRef} width={340} height={340}
               style={{ width: "100%", maxWidth: 340, height: "auto", aspectRatio: "1", border: "1px solid #eee" }} />
@@ -607,7 +650,7 @@ function App() {
         <div style={{ background: "#fff", border: "1px solid #e0ddd5", borderRadius: 4, padding: 10, marginTop: 14 }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Training dynamics</div>
           <div style={{ fontSize: 10, color: "#888", marginBottom: 6, fontFamily: "monospace" }}>
-            R{"\u00B2"} at diagnostic checkpoints. Gap between Eq.3 and Eq.5 = cost of diagonal approximation.
+            Pearson r at diagnostic checkpoints. Gap between kernel and scaled = cost of diagonal approximation.
           </div>
           <ResponsiveContainer width="100%" height={170}>
             <LineChart data={chartData} margin={{ top: 2, right: 40, bottom: 2, left: 8 }}>
@@ -618,9 +661,9 @@ function App() {
               <Tooltip contentStyle={{ fontSize: 10, fontFamily: "monospace" }} />
               <ReferenceLine yAxisId="left" y={1} stroke="#e8e5dd" strokeDasharray="4 4" />
               <ReferenceLine yAxisId="left" y={0} stroke="#e8e5dd" />
-              <Line yAxisId="left" type="monotone" dataKey="R&#178; Eq.2" stroke="#aaa" strokeWidth={1} dot={false} isAnimationActive={false} strokeDasharray="3 2" />
-              <Line yAxisId="left" type="monotone" dataKey="R&#178; Eq.3" stroke="#2563eb" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-              <Line yAxisId="left" type="monotone" dataKey="R&#178; Eq.5" stroke="#059669" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+              <Line yAxisId="left" type="monotone" dataKey="r exact" stroke="#aaa" strokeWidth={1} dot={false} isAnimationActive={false} strokeDasharray="3 2" />
+              <Line yAxisId="left" type="monotone" dataKey="r kernel" stroke="#2563eb" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+              <Line yAxisId="left" type="monotone" dataKey="r scaled" stroke="#059669" strokeWidth={1.5} dot={false} isAnimationActive={false} />
               <Line yAxisId="right" type="monotone" dataKey="loss" stroke="#d4a" strokeWidth={1} dot={false} isAnimationActive={false} strokeDasharray="4 3" />
             </LineChart>
           </ResponsiveContainer>
@@ -628,10 +671,11 @@ function App() {
 
         <div style={{ marginTop: 14, padding: "10px 12px", background: "#f5f4f0", borderRadius: 4,
           fontSize: 11, color: "#6b6860", lineHeight: 1.7, fontFamily: "monospace" }}>
-          <b>Equations from the paper:</b> SGD runs every step (fast). Jacobian/{"\u0398"} computed every {diagEvery} steps.<br/>
-          <b>Eq.2</b> (J{"\u00B7\u0394"}W): first-order Taylor, exact by construction.{" "}
-          <b>Eq.3</b> ({"\u0398\u00B7\u2202"}L): kernel prediction using partial derivatives (sum over outputs only). Should match Eq.2.{" "}
-          <b>Eq.5</b> ({"\u0398"}<sub>ii</sub>{"\u00B7"}dL/dA<sub>i</sub>): diagonal approx with backprop gradient. Tightens with width.
+          <b>How it works:</b> SGD runs every step. Jacobian/{"\u0398"} recomputed every {diagEvery} steps.<br/>
+          <b>Exact</b> (J{"\u00B7\u0394"}W): first-order Taylor expansion, exact by construction.{" "}
+          <b>Kernel</b> ({"\u0398\u00B7\u2202"}L): full kernel prediction — should match exact.{" "}
+          <b>Scaled</b> ({"\u0398"}<sub>ii</sub>{"\u00B7"}dL/dA<sub>i</sub>): diagonal approximation — improves with width.{" "}
+          <b>Raw</b> ({"\u2212"}dL/dA): unscaled activity gradient — the testable prediction.
         </div>
       </div>
     </div>
