@@ -108,7 +108,7 @@ Figures~1--2 numerically verify Eqs.\,2--5 in a 3-hidden-layer ReLU MLP trained 
 \begin{figure}[h!]
 \centering
 \includegraphics[width=\textwidth]{fig_ntk.pdf}
-\caption{\textbf{In a wide network doing weight descent, activity changes closely match activity-space gradient descent.}  Top row: width\,=\,8.  Middle row: width\,=\,48.  Left: normalised $\Theta_{ik}$ heatmaps (white = uncorrelated, blue = correlated).  Centre panels: predicted vs.\ actual $\Delta A$ for the chain-rule identity (Eq.\,2), the full kernel (Eq.\,3), and the diagonal approximation (Eq.\,5).  Bottom row: $r$ and loss over training.  At width\,=\,8 the diagonal approximation fails ($r<0$); at width\,=\,48 it is near-perfect.}
+\caption{\textbf{In a wide network doing weight descent, activity changes closely match activity-space gradient descent.}  Top row: width\,=\,8.  Middle row: width\,=\,48.  Left: normalised $\Theta_{ik}$ heatmaps (white = uncorrelated, blue = correlated).  Scatter panels: predicted vs.\ actual $\Delta A$ for the full kernel (Eq.\,3), the diagonal approximation (Eq.\,5), and raw $-\partial L/\partial A$.  Dead ReLU neurons excluded.  Bottom row: $r(\Delta A,\,-\partial L/\partial A)$ and loss over training.}
 \end{figure}
 
 \begin{figure}[h!]

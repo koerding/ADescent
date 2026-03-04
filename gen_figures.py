@@ -321,30 +321,26 @@ print("Running width=48 experiment...")
 h48, snap48, sizes48 = run_experiment(width=48, depth=3, eta=0.005, n_steps=3000, diag_every=30)
 
 # ---- FIGURE: 2-row comparison ----
-fig = plt.figure(figsize=(8.5, 6.2), dpi=200)
+fig = plt.figure(figsize=(7.0, 6.2), dpi=200)
 fig.patch.set_facecolor('#faf9f6')
 
-gs = GridSpec(3, 5, figure=fig, hspace=0.65, wspace=0.55,
-              left=0.06, right=0.97, top=0.95, bottom=0.07)
+gs = GridSpec(3, 4, figure=fig, hspace=0.65, wspace=0.55,
+              left=0.07, right=0.97, top=0.95, bottom=0.07)
 
 
 # Row 1: width=8
 ax1 = fig.add_subplot(gs[0, 0])
 plot_theta_heatmap(ax1, snap8['Theta'], snap8['nc'], ' (width=8)')
 
-ax2 = fig.add_subplot(gs[0, 1])
-plot_scatter(ax2, snap8['gt'], snap8['deltaA'], snap8['nc'],
-             r'$J\cdot\Delta W$', 'Eq. 2 (identity)')
-
-ax3 = fig.add_subplot(gs[0, 2])
+ax3 = fig.add_subplot(gs[0, 1])
 plot_scatter(ax3, snap8['fp'], snap8['deltaA'], snap8['nc'],
              r'$\Theta\cdot\partial L$', 'Eq. 3 (kernel)')
 
-ax4 = fig.add_subplot(gs[0, 3])
+ax4 = fig.add_subplot(gs[0, 2])
 plot_scatter(ax4, snap8['dp'], snap8['deltaA'], snap8['nc'],
              r'diag $\Theta$', 'Eq. 5 (diagonal)')
 
-ax4b = fig.add_subplot(gs[0, 4])
+ax4b = fig.add_subplot(gs[0, 3])
 plot_scatter(ax4b, snap8['ng'], snap8['deltaA'], snap8['nc'],
              r'$-\partial L/\partial A$', r'$-dL/dA$ (raw)')
 ax4b.legend(fontsize=4.5, loc='lower right', framealpha=0.8, markerscale=0.8)
@@ -353,19 +349,15 @@ ax4b.legend(fontsize=4.5, loc='lower right', framealpha=0.8, markerscale=0.8)
 ax5 = fig.add_subplot(gs[1, 0])
 plot_theta_heatmap(ax5, snap48['Theta'], snap48['nc'], ' (width=48)')
 
-ax6 = fig.add_subplot(gs[1, 1])
-plot_scatter(ax6, snap48['gt'], snap48['deltaA'], snap48['nc'],
-             r'$J\cdot\Delta W$', 'Eq. 2 (identity)')
-
-ax7 = fig.add_subplot(gs[1, 2])
+ax7 = fig.add_subplot(gs[1, 1])
 plot_scatter(ax7, snap48['fp'], snap48['deltaA'], snap48['nc'],
              r'$\Theta\cdot\partial L$', 'Eq. 3 (kernel)')
 
-ax8 = fig.add_subplot(gs[1, 3])
+ax8 = fig.add_subplot(gs[1, 2])
 plot_scatter(ax8, snap48['dp'], snap48['deltaA'], snap48['nc'],
              r'diag $\Theta$', 'Eq. 5 (diagonal)')
 
-ax8b = fig.add_subplot(gs[1, 4])
+ax8b = fig.add_subplot(gs[1, 3])
 plot_scatter(ax8b, snap48['ng'], snap48['deltaA'], snap48['nc'],
              r'$-\partial L/\partial A$', r'$-dL/dA$ (raw)')
 
@@ -374,7 +366,7 @@ ax9 = fig.add_subplot(gs[2, :2])
 plot_dynamics(ax9, h8, show_loss_label=False)
 ax9.set_title('Training dynamics (width=8)', fontsize=8, fontweight='bold')
 
-ax10 = fig.add_subplot(gs[2, 3:])
+ax10 = fig.add_subplot(gs[2, 2:])
 plot_dynamics(ax10, h48, show_loss_label=True)
 ax10.set_title('Training dynamics (width=48)', fontsize=8, fontweight='bold')
 
