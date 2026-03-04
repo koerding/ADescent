@@ -697,7 +697,7 @@ function App() {
         <div style={{ background: "#fff", border: "1px solid #e0ddd5", borderRadius: 4, padding: 10, marginTop: 14 }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Training dynamics</div>
           <div style={{ fontSize: 10, color: "#888", marginBottom: 6, fontFamily: "monospace" }}>
-            Pearson r at diagnostic checkpoints. Gap between kernel and scaled = cost of diagonal approximation.
+            SGD every step; Jacobian/{"\u0398"} recomputed every {diagEvery} steps. Gap between kernel and scaled = cost of diagonal approx.
           </div>
           <ResponsiveContainer width="100%" height={170}>
             <LineChart data={chartData} margin={{ top: 2, right: 40, bottom: 2, left: 8 }}>
@@ -716,14 +716,6 @@ function App() {
           </ResponsiveContainer>
         </div>
 
-        <div style={{ marginTop: 14, padding: "10px 12px", background: "#f5f4f0", borderRadius: 4,
-          fontSize: 11, color: "#6b6860", lineHeight: 1.7, fontFamily: "monospace" }}>
-          <b>How it works:</b> SGD runs every step. Jacobian/{"\u0398"} recomputed every {diagEvery} steps.<br/>
-          <b>Exact</b> (J{"\u00B7\u0394"}W): first-order Taylor expansion, exact by construction.{" "}
-          <b>Kernel</b> ({"\u0398\u00B7\u2202"}L): full kernel prediction — should match exact.{" "}
-          <b>Scaled</b> ({"\u0398"}<sub>ii</sub>{"\u00B7"}dL/dA<sub>i</sub>): diagonal approximation — improves with width.{" "}
-          <b>Raw</b> ({"\u2212"}dL/dA): unscaled activity gradient — the testable prediction.
-        </div>
       </div>
     </div>
   );
