@@ -716,22 +716,6 @@ function App() {
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
           <div style={{ background: "#fff", border: "1px solid #e0ddd5", borderRadius: 4, padding: 10 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{"\u0398"}<sub>ik</sub> correlation (active neurons only)</div>
-            <div style={{ fontSize: 10, color: "#888", marginBottom: 6, fontFamily: "monospace" }}>
-              {"\u0398"}<sub>ik</sub>{"/\u221A(\u0398"}<sub>ii</sub>{"\u0398"}<sub>kk</sub>{") \u00B7 lines = layers"}
-            </div>
-            <canvas ref={heatRef} width={340} height={340}
-              style={{ width: "100%", maxWidth: 340, height: "auto", aspectRatio: "1", imageRendering: "pixelated", border: "1px solid #eee" }} />
-            <div style={{ display: "flex", justifyContent: "center", gap: 10, marginTop: 5, fontSize: 9, fontFamily: "monospace", color: "#888" }}>
-              {[["rgb(255,55,55)", "\u22121"], ["#fff", "0"], ["rgb(55,55,255)", "+1"]].map(([c, l]) => (
-                <span key={l} style={{ display: "flex", alignItems: "center", gap: 2 }}>
-                  <span style={{ width: 9, height: 9, background: c, border: "1px solid #ccc", display: "inline-block" }} />{l}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          <div style={{ background: "#fff", border: "1px solid #e0ddd5", borderRadius: 4, padding: 10 }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Training dynamics</div>
             <div style={{ fontSize: 10, color: "#888", marginBottom: 6, fontFamily: "monospace" }}>
               SGD every step; Jacobian/{"\u0398"} recomputed every {diagEvery} steps. Gap between kernel and scaled = cost of diagonal approx.
@@ -751,6 +735,25 @@ function App() {
                 <Line yAxisId="right" type="monotone" dataKey="loss" stroke="#d4a" strokeWidth={1} dot={false} isAnimationActive={false} strokeDasharray="4 3" />
               </LineChart>
             </ResponsiveContainer>
+          </div>
+
+          <div style={{ background: "#fff", border: "1px solid #e0ddd5", borderRadius: 4, padding: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{"\u0398"}<sub>ik</sub> correlation (active neurons only)</div>
+            <div style={{ fontSize: 10, color: "#888", marginBottom: 6, fontFamily: "monospace" }}>
+              {"\u0398"}<sub>ik</sub>{"/\u221A(\u0398"}<sub>ii</sub>{"\u0398"}<sub>kk</sub>{") \u00B7 lines = layers"}
+            </div>
+            <canvas ref={heatRef} width={340} height={340}
+              style={{ width: "100%", maxWidth: 340, height: "auto", aspectRatio: "1", imageRendering: "pixelated", border: "1px solid #eee" }} />
+            <div style={{ display: "flex", justifyContent: "center", gap: 10, marginTop: 5, fontSize: 9, fontFamily: "monospace", color: "#888" }}>
+              {[["rgb(255,55,55)", "\u22121"], ["#fff", "0"], ["rgb(55,55,255)", "+1"]].map(([c, l]) => (
+                <span key={l} style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                  <span style={{ width: 9, height: 9, background: c, border: "1px solid #ccc", display: "inline-block" }} />{l}
+                </span>
+              ))}
+            </div>
+            <div style={{ fontSize: 10, color: "#6b6860", marginTop: 8, lineHeight: 1.5 }}>
+              Implied kernel: how learning in one neuron influences changes in others through shared upstream weights.
+            </div>
           </div>
         </div>
 
