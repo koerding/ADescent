@@ -580,6 +580,44 @@ export default function App() {
           <span style={{ color: "#059669" }}>R²<sub style={{fontSize:9}}>Eq.5</sub>: <b>{fmt(m.r2D)}</b></span>
         </div>
 
+        <div style={{ background: "#fff", border: "1px solid #e0ddd5", borderRadius: 4, padding: 14, marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>Does GD on weights look like GD on activities?</div>
+            <div style={{ display: "flex", gap: 0, fontFamily: "monospace", fontSize: 10 }}>
+              {MODES.map((mode, mi) => (
+                <button key={mode} onClick={() => setScatterMode(mode)}
+                  style={{
+                    padding: "3px 8px", border: "1px solid #ccc",
+                    borderLeft: mi > 0 ? "none" : undefined,
+                    borderRadius: mi === 0 ? "3px 0 0 3px" : mi === 2 ? "0 3px 3px 0" : "0",
+                    background: scatterMode === mode ? "#2a2a2e" : "#fff",
+                    color: scatterMode === mode ? "#fff" : "#666",
+                    cursor: "pointer", fontFamily: "monospace", fontSize: 10,
+                  }}>
+                  {mode === "ground" ? "Eq.2" : mode === "fullTheta" ? "Eq.3" : "Eq.5"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: "#888", marginBottom: 8, fontFamily: "monospace" }}>
+            {scatterMode === "ground" && "Eq.2: J·ΔW — first-order Taylor identity (sanity check)"}
+            {scatterMode === "fullTheta" && "Eq.3: Θ·∂L — kernel with partial derivs, sum over outputs only"}
+            {scatterMode === "diagBP" && "Eq.5: Θᵢᵢ × backprop gradient — diagonal approximation"}
+          </div>
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            <canvas ref={scatRef} width={540} height={540}
+              style={{ width: "100%", maxWidth: 540, height: "auto", aspectRatio: "1", border: "1px solid #eee" }} />
+          </div>
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 6, fontSize: 10, fontFamily: "monospace" }}>
+            {sizes.slice(1).map((n, i) => (
+              <span key={i} style={{ display: "flex", alignItems: "center", gap: 3, color: LCOLORS[i % 4] }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: LCOLORS[i % 4], display: "inline-block" }} />
+                L{i + 1} ({n})
+              </span>
+            ))}
+          </div>
+        </div>
+
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
           <div style={{ background: "#fff", border: "1px solid #e0ddd5", borderRadius: 4, padding: 10 }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{"Θ"}<sub>ik</sub> correlation</div>
@@ -598,62 +636,26 @@ export default function App() {
           </div>
 
           <div style={{ background: "#fff", border: "1px solid #e0ddd5", borderRadius: 4, padding: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>Actual vs predicted ΔA</div>
-              <div style={{ display: "flex", gap: 0, fontFamily: "monospace", fontSize: 9 }}>
-                {MODES.map((mode, mi) => (
-                  <button key={mode} onClick={() => setScatterMode(mode)}
-                    style={{
-                      padding: "2px 6px", border: "1px solid #ccc",
-                      borderLeft: mi > 0 ? "none" : undefined,
-                      borderRadius: mi === 0 ? "3px 0 0 3px" : mi === 2 ? "0 3px 3px 0" : "0",
-                      background: scatterMode === mode ? "#2a2a2e" : "#fff",
-                      color: scatterMode === mode ? "#fff" : "#666",
-                      cursor: "pointer", fontFamily: "monospace", fontSize: 9,
-                    }}>
-                    {mode === "ground" ? "Eq.2" : mode === "fullTheta" ? "Eq.3" : "Eq.5"}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Training dynamics</div>
             <div style={{ fontSize: 10, color: "#888", marginBottom: 6, fontFamily: "monospace" }}>
-              {scatterMode === "ground" && "Eq.2: J·ΔW — first-order Taylor identity (sanity check)"}
-              {scatterMode === "fullTheta" && "Eq.3: Θ·∂L — kernel with partial derivs, sum over outputs only"}
-              {scatterMode === "diagBP" && "Eq.5: Θᵢᵢ × backprop gradient — diagonal approximation"}
+              R² at diagnostic checkpoints. Gap between Eq.3 and Eq.5 = cost of diagonal approximation.
             </div>
-            <canvas ref={scatRef} width={340} height={340}
-              style={{ width: "100%", maxWidth: 340, height: "auto", aspectRatio: "1", border: "1px solid #eee" }} />
-            <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 5, fontSize: 9, fontFamily: "monospace" }}>
-              {sizes.slice(1).map((n, i) => (
-                <span key={i} style={{ display: "flex", alignItems: "center", gap: 2, color: LCOLORS[i % 4] }}>
-                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: LCOLORS[i % 4], display: "inline-block" }} />
-                  L{i + 1} ({n})
-                </span>
-              ))}
-            </div>
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={chartData} margin={{ top: 2, right: 40, bottom: 2, left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                <XAxis dataKey="step" tick={{ fontSize: 9, fontFamily: "monospace" }} />
+                <YAxis yAxisId="left" domain={[-0.5, 1.05]} tick={{ fontSize: 9, fontFamily: "monospace" }} />
+                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9, fontFamily: "monospace" }} />
+                <Tooltip contentStyle={{ fontSize: 10, fontFamily: "monospace" }} />
+                <ReferenceLine yAxisId="left" y={1} stroke="#e8e5dd" strokeDasharray="4 4" />
+                <ReferenceLine yAxisId="left" y={0} stroke="#e8e5dd" />
+                <Line yAxisId="left" type="monotone" dataKey="R² Eq.2" stroke="#aaa" strokeWidth={1} dot={false} isAnimationActive={false} strokeDasharray="3 2" />
+                <Line yAxisId="left" type="monotone" dataKey="R² Eq.3" stroke="#2563eb" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                <Line yAxisId="left" type="monotone" dataKey="R² Eq.5" stroke="#059669" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                <Line yAxisId="right" type="monotone" dataKey="loss" stroke="#d4a" strokeWidth={1} dot={false} isAnimationActive={false} strokeDasharray="4 3" />
+              </LineChart>
+            </ResponsiveContainer>
           </div>
-        </div>
-
-        <div style={{ background: "#fff", border: "1px solid #e0ddd5", borderRadius: 4, padding: 10, marginTop: 14 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Training dynamics</div>
-          <div style={{ fontSize: 10, color: "#888", marginBottom: 6, fontFamily: "monospace" }}>
-            R² at diagnostic checkpoints. Gap between Eq.3 and Eq.5 = cost of diagonal approximation.
-          </div>
-          <ResponsiveContainer width="100%" height={170}>
-            <LineChart data={chartData} margin={{ top: 2, right: 40, bottom: 2, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-              <XAxis dataKey="step" tick={{ fontSize: 9, fontFamily: "monospace" }} />
-              <YAxis yAxisId="left" domain={[-0.5, 1.05]} tick={{ fontSize: 9, fontFamily: "monospace" }} />
-              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9, fontFamily: "monospace" }} />
-              <Tooltip contentStyle={{ fontSize: 10, fontFamily: "monospace" }} />
-              <ReferenceLine yAxisId="left" y={1} stroke="#e8e5dd" strokeDasharray="4 4" />
-              <ReferenceLine yAxisId="left" y={0} stroke="#e8e5dd" />
-              <Line yAxisId="left" type="monotone" dataKey="R² Eq.2" stroke="#aaa" strokeWidth={1} dot={false} isAnimationActive={false} strokeDasharray="3 2" />
-              <Line yAxisId="left" type="monotone" dataKey="R² Eq.3" stroke="#2563eb" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-              <Line yAxisId="left" type="monotone" dataKey="R² Eq.5" stroke="#059669" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-              <Line yAxisId="right" type="monotone" dataKey="loss" stroke="#d4a" strokeWidth={1} dot={false} isAnimationActive={false} strokeDasharray="4 3" />
-            </LineChart>
-          </ResponsiveContainer>
         </div>
 
         <div style={{ marginTop: 14, padding: "10px 12px", background: "#f5f4f0", borderRadius: 4,
