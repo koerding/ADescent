@@ -147,11 +147,6 @@ function computeAllPredictions(net, fwd, dLdW, dLdA, target, eta) {
   let off = 0;
   for (let l = 0; l < L; l++) { layerOffsets.push(off); off += sizes[l + 1]; }
 
-  const gradA_partial = new Float64Array(totalN);
-  const outputOffset = layerOffsets[L - 1];
-  const nout = sizes[L];
-  for (let i = 0; i < nout; i++) gradA_partial[outputOffset + i] = a[L][i] - target[i];
-
   const gradA_bp = new Float64Array(totalN);
   for (let l = 1; l <= L; l++) {
     if (dLdA[l]) {
@@ -216,16 +211,6 @@ function computeAllPredictions(net, fwd, dLdW, dLdA, target, eta) {
 
   const groundTruth = matVec(J, totalN, totalParams, deltaW);
 
-  const JtGp = new Float64Array(totalParams);
-  for (let alpha = 0; alpha < totalParams; alpha++) {
-    let s = 0;
-    for (let i = 0; i < totalN; i++) s += J[i * totalParams + alpha] * gradA_partial[i];
-    JtGp[alpha] = s;
-  }
-  const thetaGradP = matVec(J, totalN, totalParams, JtGp);
-  const fullThetaPred = new Float64Array(totalN);
-  for (let i = 0; i < totalN; i++) fullThetaPred[i] = -eta * thetaGradP[i];
-
   const diagPred = new Float64Array(totalN);
   for (let i = 0; i < totalN; i++) {
     let rowNorm = 0;
@@ -234,16 +219,21 @@ function computeAllPredictions(net, fwd, dLdW, dLdA, target, eta) {
     diagPred[i] = -eta * rowNorm * gradA_bp[i];
   }
 
-  let Theta = null;
+  // Per-layer kernel Phi (block-diagonal): only same-layer pairs
+  let Phi = null;
   if (totalN <= 500) {
-    Theta = new Float64Array(totalN * totalN);
-    for (let i = 0; i < totalN; i++) {
-      for (let j = i; j < totalN; j++) {
-        let s = 0;
-        const ri = i * totalParams, rj = j * totalParams;
-        for (let k = 0; k < totalParams; k++) s += J[ri + k] * J[rj + k];
-        Theta[i * totalN + j] = s;
-        if (i !== j) Theta[j * totalN + i] = s;
+    Phi = new Float64Array(totalN * totalN);
+    for (let l = 0; l < L; l++) {
+      const gOff = layerOffsets[l];
+      const n = sizes[l + 1];
+      for (let i = 0; i < n; i++) {
+        for (let j = i; j < n; j++) {
+          let s = 0;
+          const ri = (gOff + i) * totalParams, rj = (gOff + j) * totalParams;
+          for (let k = 0; k < totalParams; k++) s += J[ri + k] * J[rj + k];
+          Phi[(gOff + i) * totalN + (gOff + j)] = s;
+          if (i !== j) Phi[(gOff + j) * totalN + (gOff + i)] = s;
+        }
       }
     }
   }
@@ -265,7 +255,7 @@ function computeAllPredictions(net, fwd, dLdW, dLdA, target, eta) {
   // Layer-local kernel prediction: ΔA^(ℓ) = -η D_ℓ ∇L + J_ℓ ΔA^(ℓ-1)
   const layerLocalPred = computeLayerLocalPred(net, fwd, dLdA, eta);
 
-  return { groundTruth, fullThetaPred, diagPred, negGradA, layerLocalPred, Theta, totalN, neuronCounts, active };
+  return { groundTruth, diagPred, negGradA, layerLocalPred, Phi, totalN, neuronCounts, active };
 }
 
 function computeLayerLocalPred(net, fwd, dLdA, eta) {
@@ -431,12 +421,11 @@ function corrfn(actual, pred) {
 // ======================== COMPONENT ========================
 
 const LCOLORS = ["#2563eb", "#0891b2", "#059669", "#d97706"];
-const MODES = ["negGradA", "diagBP", "fullTheta", "layerLocal"];
+const MODES = ["negGradA", "diagBP", "kernel"];
 const MODE_LABELS = {
-  fullTheta: "\u0398\u00B7\u2202L (kernel)",
-  diagBP: "diag \u0398 (scaled)",
+  kernel: "\u03A6\u00B7\u2207L (kernel)",
+  diagBP: "diag \u03A6 (scaled)",
   negGradA: "\u2212dL/dA (raw)",
-  layerLocal: "\u03A6\u00B7\u2207L (layer-local)",
 };
 
 function App() {
@@ -514,7 +503,7 @@ function App() {
     const aBefore = [];
     for (let l = 1; l <= L; l++)
       for (let i = 0; i < fwd.a[l].length; i++) aBefore.push(fwd.a[l][i]);
-    const { groundTruth, fullThetaPred, diagPred, negGradA, layerLocalPred, Theta, totalN, neuronCounts, active } =
+    const { groundTruth, diagPred, negGradA, layerLocalPred, Phi, totalN, neuronCounts, active } =
       computeAllPredictions(net, fwd, dLdW, dLdA, Y[bi], lr);
     for (let l = 0; l < L; l++)
       for (let i = 0; i < net.W[l].length; i++) net.W[l][i] -= lr * dLdW[l][i];
@@ -535,10 +524,9 @@ function App() {
     const filter = arr => arr.filter((_, i) => keep[i]);
     const deltaA = filter(deltaAFull);
     const filtGround = filter(Array.from(groundTruth));
-    const filtTheta = filter(Array.from(fullThetaPred));
     const filtDiag = filter(Array.from(diagPred));
     const filtNeg = filter(Array.from(negGradA));
-    const filtLocal = filter(Array.from(layerLocalPred));
+    const filtKernel = filter(Array.from(layerLocalPred));
     // Recount neurons per layer after filtering
     const filtCounts = [];
     let idx = 0;
@@ -548,13 +536,12 @@ function App() {
       filtCounts.push(c);
     }
     const r2Raw = corrfn(deltaA, filtNeg);
-    const r2F = corrfn(deltaA, filtTheta);
+    const r2K = corrfn(deltaA, filtKernel);
     const r2D = corrfn(deltaA, filtDiag);
-    const r2LL = corrfn(deltaA, filtLocal);
     stepRef.current++;
     return {
-      preds: { fullTheta: filtTheta, diagBP: filtDiag, negGradA: filtNeg, layerLocal: filtLocal },
-      actual: deltaA, neuronCounts: filtCounts, Theta, totalN, totalLoss, r2Raw, r2F, r2D, r2LL, keep,
+      preds: { kernel: filtKernel, diagBP: filtDiag, negGradA: filtNeg },
+      actual: deltaA, neuronCounts: filtCounts, Phi, totalN, totalLoss, r2Raw, r2K, r2D, keep,
       stimulus: X[bi], stimLabel: Y[bi][0] > 0.5 ? "horiz" : "vert",
     };
   }, [lr]);
@@ -565,25 +552,25 @@ function App() {
     if (doExpensive) {
       const result = expensiveStep();
       if (!result) return;
-      const { preds, actual, neuronCounts, Theta, totalN, totalLoss, r2Raw, r2F, r2D, r2LL, keep, stimulus: stim, stimLabel: sLabel } = result;
+      const { preds, actual, neuronCounts, Phi, totalN, totalLoss, r2Raw, r2K, r2D, keep, stimulus: stim, stimLabel: sLabel } = result;
       setStimulus(stim); setStimLabel(sLabel);
-      if (Theta && keep) {
-        // Filter Theta to active neurons only
+      if (Phi && keep) {
+        // Filter Phi to active neurons only
         const activeIdx = []; for (let i = 0; i < keep.length; i++) if (keep[i]) activeIdx.push(i);
         const aN = activeIdx.length;
-        const filtTheta = new Float64Array(aN * aN);
+        const filtPhi = new Float64Array(aN * aN);
         for (let i = 0; i < aN; i++)
           for (let j = 0; j < aN; j++)
-            filtTheta[i * aN + j] = Theta[activeIdx[i] * totalN + activeIdx[j]];
-        drawHeatmap(heatRef.current, filtTheta, aN, neuronCounts);
+            filtPhi[i * aN + j] = Phi[activeIdx[i] * totalN + activeIdx[j]];
+        drawHeatmap(heatRef.current, filtPhi, aN, neuronCounts);
       }
       lastData.current = { preds, actual, neuronCounts };
       drawScatter(scatRef.current, preds[scatterMode], actual, neuronCounts, MODE_LABELS[scatterMode], scatterMode === "negGradA");
       setStep(stepRef.current);
-      setMetrics({ loss: totalLoss, r2Raw, r2F, r2D, r2LL });
+      setMetrics({ loss: totalLoss, r2Raw, r2K, r2D });
       setHistory(h => [...h, {
         step: stepRef.current, loss: +totalLoss.toFixed(5),
-        "r raw": +r2Raw.toFixed(4), "r kernel": +r2F.toFixed(4), "r scaled": +r2D.toFixed(4), "r local": +r2LL.toFixed(4),
+        "r raw": +r2Raw.toFixed(4), "r kernel": +r2K.toFixed(4), "r scaled": +r2D.toFixed(4),
       }]);
     } else {
       const totalLoss = cheapStep();
@@ -714,9 +701,8 @@ function App() {
           </span>}
           <span>loss: <b>{fmt(m.loss, 4)}</b></span>
           <span style={{ color: "#888" }}>r<sub style={{fontSize:9}}>raw</sub>: <b>{fmt(m.r2Raw)}</b></span>
-          <span style={{ color: "#2563eb" }}>r<sub style={{fontSize:9}}>kernel</sub>: <b>{fmt(m.r2F)}</b></span>
+          <span style={{ color: "#2563eb" }}>r<sub style={{fontSize:9}}>kernel</sub>: <b>{fmt(m.r2K)}</b></span>
           <span style={{ color: "#059669" }}>r<sub style={{fontSize:9}}>scaled</sub>: <b>{fmt(m.r2D)}</b></span>
-          <span style={{ color: "#9333ea" }}>r<sub style={{fontSize:9}}>local</sub>: <b>{fmt(m.r2LL)}</b></span>
         </div>
 
         <div style={{ background: "#fff", border: "1px solid #e0ddd5", borderRadius: 4, padding: 14, marginBottom: 14 }}>
@@ -724,7 +710,7 @@ function App() {
             <div style={{ fontSize: 15, fontWeight: 700 }}>
               {scatterMode === "negGradA"
                 ? "Does GD on weights look like GD on activities?"
-                : "Can kernels predict the change of neurons?"}
+                : "Can the per-layer kernel predict activity changes?"}
             </div>
             <div style={{ display: "flex", gap: 0, fontFamily: "monospace", fontSize: 10 }}>
               {MODES.map((mode, mi) => (
@@ -737,16 +723,15 @@ function App() {
                     color: scatterMode === mode ? "#fff" : "#666",
                     cursor: "pointer", fontFamily: "monospace", fontSize: 10,
                   }}>
-                  {mode === "negGradA" ? "raw" : mode === "diagBP" ? "scaled" : mode === "fullTheta" ? "kernel" : "\u03A6 local"}
+                  {mode === "negGradA" ? "raw" : mode === "diagBP" ? "scaled" : "kernel"}
                 </button>
               ))}
             </div>
           </div>
           <div style={{ fontSize: 11, color: "#888", marginBottom: 8, fontFamily: "monospace" }}>
             {scatterMode === "negGradA" && "Raw activity gradient \u2014 the experimentally testable prediction (active neurons only)"}
-            {scatterMode === "diagBP" && "Gradient scaled by per-neuron \u0398\u1D62\u1D62 \u2014 corrects for parameter count (active neurons only)"}
-            {scatterMode === "fullTheta" && "Full kernel prediction \u2014 includes cross-neuron coupling (active neurons only)"}
-            {scatterMode === "layerLocal" && "Layer-local \u03A6 kernel \u2014 recursive per-layer formulation, should match global \u0398 exactly"}
+            {scatterMode === "diagBP" && "Gradient scaled by per-neuron \u03A6\u1D62\u1D62 \u2014 corrects for parameter count (active neurons only)"}
+            {scatterMode === "kernel" && "Per-layer kernel \u03A6 prediction \u2014 includes within-layer coupling (active neurons only)"}
           </div>
           <div style={{ display: "flex", justifyContent: "center" }}>
             <canvas ref={scatRef} width={540} height={540}
@@ -766,7 +751,7 @@ function App() {
           <div style={{ background: "#fff", border: "1px solid #e0ddd5", borderRadius: 4, padding: 10 }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Training dynamics</div>
             <div style={{ fontSize: 10, color: "#888", marginBottom: 6, fontFamily: "monospace" }}>
-              SGD every step; Jacobian/{"\u0398"} recomputed every {diagEvery} steps. Gap between kernel and scaled = cost of diagonal approx.
+              SGD every step; Jacobian/{"\u03A6"} recomputed every {diagEvery} steps. Gap between kernel and scaled = cost of diagonal approx.
             </div>
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={chartData} margin={{ top: 2, right: 40, bottom: 2, left: 8 }}>
@@ -780,16 +765,15 @@ function App() {
                 <Line yAxisId="left" type="monotone" dataKey="r raw" stroke="#aaa" strokeWidth={1} dot={false} isAnimationActive={false} strokeDasharray="3 2" />
                 <Line yAxisId="left" type="monotone" dataKey="r kernel" stroke="#2563eb" strokeWidth={1.5} dot={false} isAnimationActive={false} />
                 <Line yAxisId="left" type="monotone" dataKey="r scaled" stroke="#059669" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-                <Line yAxisId="left" type="monotone" dataKey="r local" stroke="#9333ea" strokeWidth={1.5} dot={false} isAnimationActive={false} strokeDasharray="6 3" />
                 <Line yAxisId="right" type="monotone" dataKey="loss" stroke="#d4a" strokeWidth={1} dot={false} isAnimationActive={false} strokeDasharray="4 3" />
               </LineChart>
             </ResponsiveContainer>
           </div>
 
           <div style={{ background: "#fff", border: "1px solid #e0ddd5", borderRadius: 4, padding: 10 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{"\u0398"}<sub>ik</sub> correlation (active neurons only)</div>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{"\u03A6"}<sup>({"\u2113"})</sup><sub>ik</sub> correlation (active neurons only)</div>
             <div style={{ fontSize: 10, color: "#888", marginBottom: 6, fontFamily: "monospace" }}>
-              {"\u0398"}<sub>ik</sub>{"/\u221A(\u0398"}<sub>ii</sub>{"\u0398"}<sub>kk</sub>{") \u00B7 lines = layers"}
+              {"\u03A6"}<sub>ik</sub>{"/\u221A(\u03A6"}<sub>ii</sub>{"\u03A6"}<sub>kk</sub>{") \u00B7 block-diagonal by layer"}
             </div>
             <canvas ref={heatRef} width={340} height={340}
               style={{ width: "100%", maxWidth: 340, height: "auto", aspectRatio: "1", imageRendering: "pixelated", border: "1px solid #eee" }} />
@@ -801,7 +785,7 @@ function App() {
               ))}
             </div>
             <div style={{ fontSize: 10, color: "#6b6860", marginTop: 8, lineHeight: 1.5 }}>
-              Implied kernel: how learning in one neuron influences changes in others through shared upstream weights.
+              Per-layer kernel: how learning in one neuron influences same-layer neurons through shared upstream weights. Block-diagonal by construction.
             </div>
           </div>
         </div>
