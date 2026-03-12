@@ -74,30 +74,51 @@ def make_bar_images(n_per_class=20, noise=0.15):
 
 # ======================== JACOBIAN ========================
 
+def compute_layer_local_pred(sizes, W, a, h, dLdA, eta):
+    """Layer-local kernel prediction: ΔA^(ℓ) = -η D_ℓ ∇L + J_ℓ ΔA^(ℓ-1)"""
+    L = len(W)
+    totalN = sum(sizes[1:])
+    result = np.zeros(totalN)
+    prevDeltaA = None
+    off = 0
+    for l in range(L):
+        nin, nout = sizes[l], sizes[l+1]
+        # ||a_aug||^2 (includes bias=1)
+        normSq = np.sum(a[l]**2) + 1.0
+        # sigma'(z_i)
+        if l < L - 1:
+            fp = (h[l+1] > 0).astype(float)
+        else:
+            fp = np.ones(nout)
+        gradA = dLdA[l+1]
+        # Own-layer: -eta * fp^2 * normSq * dL/dA
+        deltaA = -eta * fp * fp * normSq * gradA
+        # Propagated: fp[i] * sum_j W[l][i,j] * prevDeltaA[j] (weight cols only, no bias)
+        if prevDeltaA is not None:
+            deltaA += fp * (W[l][:, :-1] @ prevDeltaA)
+        result[off:off+nout] = deltaA
+        off += nout
+        prevDeltaA = deltaA
+    return result
+
 def compute_jacobian_and_predictions(sizes, W, a, h, dLdW, dLdA, target, eta):
     L = len(W)
     neuron_counts = sizes[1:]
     totalN = sum(neuron_counts)
-    
+
     layer_offsets = []
     off = 0
     for l in range(L):
         layer_offsets.append(off)
         off += sizes[l+1]
-    
-    # Partial gradient (zero for hidden, output error for output)
-    gradA_partial = np.zeros(totalN)
-    out_off = layer_offsets[-1]
-    nout = sizes[-1]
-    gradA_partial[out_off:out_off+nout] = a[L] - target
-    
+
     # Backprop gradient (total derivative)
     gradA_bp = np.zeros(totalN)
     for l in range(1, L+1):
         if dLdA[l] is not None:
             go = layer_offsets[l-1]
             gradA_bp[go:go+len(dLdA[l])] = dLdA[l]
-    
+
     # Each layer's weight matrix is nout x (nin+1) due to bias augmentation
     totalParams = sum((sizes[i]+1)*sizes[i+1] for i in range(L))
 
@@ -137,13 +158,15 @@ def compute_jacobian_and_predictions(sizes, W, a, h, dLdW, dLdA, target, eta):
             J_prev = J_new
 
         param_offset += P
-    
+
     groundTruth = J @ deltaW_flat
-    fullThetaPred = -eta * J @ (J.T @ gradA_partial)
-    
+
     theta_diag = np.sum(J**2, axis=1)
     diagPred = -eta * theta_diag * gradA_bp
-    
+
+    # Layer-local kernel prediction
+    kernelPred = compute_layer_local_pred(sizes, W, a, h, dLdA, eta)
+
     # Active mask: hidden neurons active iff pre-activation > 0; output neurons always active
     active = np.zeros(totalN)
     for l in range(1, L+1):
@@ -156,9 +179,15 @@ def compute_jacobian_and_predictions(sizes, W, a, h, dLdW, dLdA, target, eta):
             active[go:go+n] = 1.0
     negGradA = -gradA_bp * active
 
-    Theta = J @ J.T
+    # Per-layer kernel Phi (block-diagonal)
+    Phi = np.zeros((totalN, totalN))
+    for l in range(L):
+        go = layer_offsets[l]
+        n = sizes[l+1]
+        Jl = J[go:go+n, :]
+        Phi[go:go+n, go:go+n] = Jl @ Jl.T
 
-    return groundTruth, fullThetaPred, diagPred, negGradA, Theta, neuron_counts, layer_offsets, active
+    return groundTruth, kernelPred, diagPred, negGradA, Phi, neuron_counts, layer_offsets, active
 
 def corr(actual, pred):
     if len(actual) < 2:
@@ -176,7 +205,7 @@ def run_experiment(width, depth, eta=0.005, n_steps=2000, diag_every=50):
     X, Y = make_bar_images(20)
     B = len(X)
     
-    history = {'step': [], 'loss': [], 'corr_ground': [], 'corr_full': [], 'corr_diag': [], 'corr_neg': []}
+    history = {'step': [], 'loss': [], 'corr_ground': [], 'corr_kernel': [], 'corr_diag': [], 'corr_neg': []}
     last_snap = None
 
     for step in range(n_steps):
@@ -188,7 +217,7 @@ def run_experiment(width, depth, eta=0.005, n_steps=2000, diag_every=50):
 
         if do_diag:
             a_before = np.concatenate([a[l] for l in range(1, len(W)+1)])
-            gt, fp, dp, ng, Theta, nc, lo, active = compute_jacobian_and_predictions(
+            gt, kp, dp, ng, Phi, nc, lo, active = compute_jacobian_and_predictions(
                 sizes, W, a, h, dLdW, dLdA, Y[bi], eta)
 
             for l in range(len(W)):
@@ -201,10 +230,10 @@ def run_experiment(width, depth, eta=0.005, n_steps=2000, diag_every=50):
             # Filter to active neurons only
             mask = active > 0
             deltaA = deltaA_full[mask]
-            gt = gt[mask]; fp = fp[mask]; dp = dp[mask]; ng = ng[mask]
+            gt = gt[mask]; kp = kp[mask]; dp = dp[mask]; ng = ng[mask]
 
             cg = corr(deltaA, gt)
-            cf = corr(deltaA, fp)
+            ck = corr(deltaA, kp)
             cd = corr(deltaA, dp)
             cn = corr(deltaA, ng)
 
@@ -216,13 +245,13 @@ def run_experiment(width, depth, eta=0.005, n_steps=2000, diag_every=50):
             history['step'].append(step)
             history['loss'].append(loss)
             history['corr_ground'].append(cg)
-            history['corr_full'].append(cf)
+            history['corr_kernel'].append(ck)
             history['corr_diag'].append(cd)
             history['corr_neg'].append(cn)
 
-            # Filter Theta and neuron counts for snapshot
+            # Filter Phi and neuron counts for snapshot
             active_idx = np.where(mask)[0]
-            Theta_filt = Theta[np.ix_(active_idx, active_idx)]
+            Phi_filt = Phi[np.ix_(active_idx, active_idx)]
             nc_filt = []
             idx = 0
             for count in nc:
@@ -230,13 +259,13 @@ def run_experiment(width, depth, eta=0.005, n_steps=2000, diag_every=50):
                 idx += count
 
             last_snap = {
-                'deltaA': deltaA, 'gt': gt, 'fp': fp, 'dp': dp, 'ng': ng,
-                'Theta': Theta_filt, 'nc': nc_filt, 'lo': lo, 'step': step
+                'deltaA': deltaA, 'gt': gt, 'kp': kp, 'dp': dp, 'ng': ng,
+                'Phi': Phi_filt, 'nc': nc_filt, 'lo': lo, 'step': step
             }
         else:
             for l in range(len(W)):
                 W[l] -= eta * dLdW[l]
-    
+
     return history, last_snap, sizes
 
 # ======================== PLOTTING ========================
@@ -261,7 +290,7 @@ def plot_theta_heatmap(ax, Theta, neuron_counts, title_suffix=''):
         ax.axvline(acc-0.5, color='k', linewidth=0.5, alpha=0.4)
     
     ax.set_xticks([]); ax.set_yticks([])
-    ax.set_title(r'$\Theta_{ik}$ correlation' + title_suffix, fontsize=9, fontweight='bold')
+    ax.set_title(r'$\Phi^{(\ell)}_{ik}$ correlation' + title_suffix, fontsize=9, fontweight='bold')
 
 def plot_scatter(ax, pred, actual, neuron_counts, label, eq_label):
     xmax = max(np.max(np.abs(pred)), 1e-10) * 1.15
@@ -330,15 +359,15 @@ gs = GridSpec(3, 4, figure=fig, hspace=0.65, wspace=0.55,
 
 # Row 1: width=8
 ax1 = fig.add_subplot(gs[0, 0])
-plot_theta_heatmap(ax1, snap8['Theta'], snap8['nc'], ' (width=8)')
+plot_theta_heatmap(ax1, snap8['Phi'], snap8['nc'], ' (width=8)')
 
 ax3 = fig.add_subplot(gs[0, 1])
-plot_scatter(ax3, snap8['fp'], snap8['deltaA'], snap8['nc'],
-             r'$\Theta\cdot\partial L$', 'Eq. 3 (kernel)')
+plot_scatter(ax3, snap8['kp'], snap8['deltaA'], snap8['nc'],
+             r'$\Phi\cdot\nabla L$', 'Eq. 3 (kernel)')
 
 ax4 = fig.add_subplot(gs[0, 2])
 plot_scatter(ax4, snap8['dp'], snap8['deltaA'], snap8['nc'],
-             r'diag $\Theta$', 'Eq. 5 (diagonal)')
+             r'diag $\Phi$', 'Eq. 5 (diagonal)')
 
 ax4b = fig.add_subplot(gs[0, 3])
 plot_scatter(ax4b, snap8['ng'], snap8['deltaA'], snap8['nc'],
@@ -347,15 +376,15 @@ ax4b.legend(fontsize=4.5, loc='lower right', framealpha=0.8, markerscale=0.8)
 
 # Row 2: width=48
 ax5 = fig.add_subplot(gs[1, 0])
-plot_theta_heatmap(ax5, snap48['Theta'], snap48['nc'], ' (width=48)')
+plot_theta_heatmap(ax5, snap48['Phi'], snap48['nc'], ' (width=48)')
 
 ax7 = fig.add_subplot(gs[1, 1])
-plot_scatter(ax7, snap48['fp'], snap48['deltaA'], snap48['nc'],
-             r'$\Theta\cdot\partial L$', 'Eq. 3 (kernel)')
+plot_scatter(ax7, snap48['kp'], snap48['deltaA'], snap48['nc'],
+             r'$\Phi\cdot\nabla L$', 'Eq. 3 (kernel)')
 
 ax8 = fig.add_subplot(gs[1, 2])
 plot_scatter(ax8, snap48['dp'], snap48['deltaA'], snap48['nc'],
-             r'diag $\Theta$', 'Eq. 5 (diagonal)')
+             r'diag $\Phi$', 'Eq. 5 (diagonal)')
 
 ax8b = fig.add_subplot(gs[1, 3])
 plot_scatter(ax8b, snap48['ng'], snap48['deltaA'], snap48['nc'],
